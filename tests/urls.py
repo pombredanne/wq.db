@@ -1,16 +1,10 @@
-from django.conf.urls import patterns, include, url
-from wq.db.rest import app
-from wq.db.contrib.chart.urls import make_urls
-from tests.chart_app import views
+from django.conf.urls import include, url
+from wq.db import rest
 
-chart_urls = make_urls({
-    'timeseries': views.TimeSeriesView,
-    'scatter': views.ScatterView,
-    'boxplot': views.BoxPlotView,
-})
+from tests.test_relate import create_reltype
+create_reltype()
 
-app.autodiscover()
-urlpatterns = patterns('',
-    url(r'^',       include(app.router.urls)),
-    url(r'^chart',  include(chart_urls)),
-)
+urlpatterns = [
+    url(r'^',        include(rest.router.urls)),
+    url(r'^search/', include('wq.db.contrib.search.urls')),
+]

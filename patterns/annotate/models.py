@@ -1,58 +1,25 @@
 from django.db import models
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes import generic
-from wq.db.patterns.base import SerializableGenericRelation
-from wq.db.patterns.base.models import NaturalKeyModel
-from django.contrib import admin
-from django.core.exceptions import FieldError
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation
+)
+from natural_keys import NaturalKeyModel
 from collections import OrderedDict
-import swapper
 
-swapper.set_app_prefix('annotate', 'WQ')
-ANNOTATIONTYPE_MODEL = swapper.get_model_name('annotate', 'AnnotationType')
-ANNOTATION_MODEL = swapper.get_model_name('annotate', 'Annotation')
+from django.conf import settings
+INSTALLED = ('wq.db.patterns.annotate' in settings.INSTALLED_APPS)
 
 
-class BaseAnnotationType(NaturalKeyModel):
+class AnnotationType(NaturalKeyModel):
     name = models.CharField(max_length=255)
-    contenttype = models.ForeignKey(ContentType, null=True, blank=True)
-
-    # Assign a value to annotated_model to automatically set contenttype
-    # (Useful for subclasses with a single target model)
-    annotated_model = None
 
     def __str__(self):
-        for f in self._meta.get_all_related_objects():
-            # Check for any linked subclasses as they may have a more
-            # meaningful representation
-            if f.field.__class__ == models.OneToOneField:
-                try:
-                    child = getattr(self, f.get_accessor_name())
-                except f.field.model.DoesNotExist:
-                    continue
-                else:
-                    return str(child)
-        # Fall back to name
         return self.name
 
-    def natural_key(self):
-        return (self.name,)
-
-    def clean(self, *args, **kwargs):
-        if self.annotated_model is not None:
-            self.contenttype = ContentType.objects.get_for_model(
-                self.annotated_model
-            )
-
     class Meta:
-        abstract = True
         unique_together = [['name']]
-
-
-class AnnotationType(BaseAnnotationType):
-    class Meta(BaseAnnotationType.Meta):
         db_table = 'wq_annotationtype'
-        swappable = swapper.swappable_setting('annotate', 'AnnotationType')
+        abstract = not INSTALLED
 
 
 class AnnotationManager(models.Manager):
@@ -77,36 +44,14 @@ class AnnotationManager(models.Manager):
         except self.model.DoesNotExist:
             return self.create(**kwargs), True
 
-    # Fix filtering across generic relations
-    def filter(self, *args, **kwargs):
 
-        def add_content_type(model):
-            ctype = ContentType.objects.get_for_model(model)
-            if 'content_type' in kwargs and kwargs['content_type'] != ctype:
-                raise FieldError(
-                    "Cannot match more than one generic relationship!"
-                )
-            kwargs['content_type'] = ctype
+class Annotation(models.Model):
+    type = models.ForeignKey(AnnotationType)
+    value = models.TextField(null=True, blank=True)
 
-        for rel in self.model._meta.get_all_related_many_to_many_objects():
-            if not isinstance(rel.field, generic.GenericRelation):
-                continue
-            rname = rel.field.related_query_name()
-            for key in kwargs.keys():
-                if key == rname or key.startswith(rname + '__'):
-                    add_content_type(rel.model)
-
-        return super(AnnotationManager, self).filter(*args, **kwargs)
-
-
-class BaseAnnotation(models.Model):
-    type = models.ForeignKey(ANNOTATIONTYPE_MODEL)
-
-    # Link can contain a pointer to any model
-    # FIXME: restrict to models allowed for given type
     content_type = models.ForeignKey(ContentType)
     object_id = models.PositiveIntegerField(db_index=True)
-    content_object = generic.GenericForeignKey()
+    content_object = GenericForeignKey()
 
     objects = AnnotationManager()
 
@@ -120,26 +65,12 @@ class BaseAnnotation(models.Model):
             })
 
     class Meta:
-        abstract = True
-
-
-class Annotation(BaseAnnotation):
-    value = models.TextField(null=True, blank=True)
-
-    class Meta:
         db_table = 'wq_annotation'
-        swappable = swapper.swappable_setting('annotate', 'Annotation')
-
-
-class AnnotationSet(SerializableGenericRelation):
-    def __init__(self, *args, **kwargs):
-        if len(args) == 0:
-            kwargs['to'] = ANNOTATION_MODEL
-        super(AnnotationSet, self).__init__(*args, **kwargs)
+        abstract = not INSTALLED
 
 
 class AnnotatedModel(models.Model):
-    annotations = AnnotationSet()
+    annotations = GenericRelation(Annotation)
 
     @property
     def vals(self):
@@ -147,7 +78,6 @@ class AnnotatedModel(models.Model):
 
     @vals.setter
     def vals(self, vals):
-        AnnotationType = swapper.load_model('annotate', 'AnnotationType')
         keys = [(key,) for key in vals.keys()]
         types, success = AnnotationType.objects.resolve_keys(keys)
         if not success:
@@ -164,10 +94,3 @@ class AnnotatedModel(models.Model):
 
     class Meta:
         abstract = True
-
-# Tell south not to worry about the "custom" field type
-try:
-    from south.modelsinspector import add_ignored_fields
-    add_ignored_fields(["^wq.db.patterns.annotate.models.AnnotationSet"])
-except ImportError:
-    pass

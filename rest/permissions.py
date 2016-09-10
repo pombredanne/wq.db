@@ -1,7 +1,6 @@
 from rest_framework.permissions import BasePermission
-from .models import get_ct, ContentType
-
-# _FORBIDDEN_RESPONSE = "Sorry %s, you do not have permission to %s this %s."
+from .model_tools import get_ct
+from django.utils.six import string_types
 
 
 class ModelPermissions(BasePermission):
@@ -24,10 +23,10 @@ class ModelPermissions(BasePermission):
 
 
 def has_perm(user, ct, perm):
-    if not isinstance(ct, ContentType):
-        perm = '%s_%s' % (ct, perm)
-    elif perm == 'view':
+    if perm == 'view':
         return True
+    if isinstance(ct, string_types):
+        perm = '%s_%s' % (ct, perm)
     else:
         perm = '%s.%s_%s' % (ct.app_label, perm, ct.model)
 

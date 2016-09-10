@@ -1,10 +1,12 @@
 from django.contrib.gis.db import models
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes import generic
-from wq.db.patterns.base import SerializableGenericRelation
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation
+)
 
 from django.conf import settings
 SRID = getattr(settings, 'SRID', 4326)
+INSTALLED = ('wq.db.patterns.locate' in settings.INSTALLED_APPS)
 
 
 class Location(models.Model):
@@ -15,7 +17,7 @@ class Location(models.Model):
 
     content_type = models.ForeignKey(ContentType)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey()
+    content_object = GenericForeignKey()
 
     objects = models.GeoManager()
 
@@ -27,10 +29,11 @@ class Location(models.Model):
 
     class Meta:
         db_table = 'wq_location'
+        abstract = not INSTALLED
 
 
 class LocatedModel(models.Model):
-    locations = SerializableGenericRelation(Location)
+    locations = GenericRelation(Location)
 
     class Meta:
         abstract = True

@@ -1,18 +1,57 @@
 from wq.db.rest.serializers import ModelSerializer
+from rest_framework import serializers
 from wq.db.rest.models import get_ct, get_object_id
 
 
-class TypedAttachmentSerializer(ModelSerializer):
-    attachment_fields = ['id']
-    required_fields = []
-    type_model = None
-    type_field = 'type'
-    object_field = 'content_object'
+class AttachmentListSerializer(serializers.ListSerializer):
+    def to_representation(self, data):
+        data = super(AttachmentListSerializer, self).to_representation(data)
+        if self.parent:
+            for i, row in enumerate(data):
+                row['@index'] = i
+        return data
 
-    def to_native(self, obj):
-        data = super(TypedAttachmentSerializer, self).to_native(obj)
 
-        has_parent = self.parent and hasattr(self.parent.opts, 'model')
+class TypedAttachmentListSerializer(AttachmentListSerializer):
+    def get_value(self, dictionary):
+        # Handle attachments that are submitted together with their parent
+        value = super(TypedAttachmentListSerializer, self).get_value(
+            dictionary
+        )
+        if not isinstance(value, list):
+            return []
+        for i, row in enumerate(value):
+            empty = True
+            if isinstance(row, dict):
+                for key, val in row.items():
+                    if key == self.child.Meta.type_field:
+                        continue
+                    elif val:
+                        empty = False
+            if empty:
+                value[i] = None
+        return value
+
+
+class AttachmentSerializer(ModelSerializer):
+    id = serializers.IntegerField(required=False)
+
+    def __init__(self, *args, **kwargs):
+        kwargs['allow_null'] = True
+        super(AttachmentSerializer, self).__init__(*args, **kwargs)
+
+    class Meta:
+        list_serializer_class = AttachmentListSerializer
+
+
+class TypedAttachmentSerializer(AttachmentSerializer):
+    def to_representation(self, obj):
+        data = super(TypedAttachmentSerializer, self).to_representation(obj)
+
+        has_parent = (
+            self.parent and self.parent.parent and
+            hasattr(self.parent.parent.Meta, 'model')
+        )
         if has_parent:
             # This is being serialized with its parent object, don't need to
             # reference the parent again.
@@ -26,71 +65,94 @@ class TypedAttachmentSerializer(ModelSerializer):
             # get_object_id insted of obj.object_id, in case the the content
             # object is an IdentifiedModel
 
-            parent_obj = getattr(obj, self.object_field)
-            idname = get_ct(parent_obj).identifier + '_id'
-            data[idname] = get_object_id(parent_obj)
+            parent_obj = getattr(obj, self.Meta.object_field)
+            if parent_obj is not None:
+                idname = get_ct(parent_obj).identifier
+                data[idname + '_id'] = get_object_id(parent_obj)
+
+                # In detail views, include full parent object (without _id
+                # suffix)
+                if self.is_detail:
+                    from wq.db import rest
+                    data[idname] = rest.router.serialize(parent_obj)
         return data
 
-    @property
-    def expected_types(self):
-        return self.type_model.objects.all()
-
-    def create_dict(self, atype, data, fields, index):
-        attachment = {
-            self.type_field: atype.pk if atype else None,
-        }
-        for field in fields:
-            if fields[field] in data:
-                attachment[field] = data[fields[field]]
-                if field == 'id' and attachment[field]:
-                    attachment[field] = int(attachment[field])
-        for field in self.required_fields:
-            if not attachment.get(field, None):
-                return None
-        return attachment
-
-    def field_from_native(self, data, files, field_name, into):
-        # Handle attachments that are submitted together with their parent
-
-        # Ideal case: an array of dicts, this can be handled by the default
-        # implementation
-        if field_name in data:
-            return super(TypedAttachmentSerializer, self).field_from_native(
-                data, files, field_name, into
-            )
-        # Common case: form submission.  In this case each attachment should
-        # be submitted as form fields with names in the format [model]_[typeid]
-        # e.g. annotation_23=30.5 will become {'type': 23, 'value': '30.5'}
-
-        # Retrieve form values into more usable array/dict format
-        attachments = []
-
-        ct = get_ct(self.opts.model)
-        i = 0
-        for atype in self.expected_types:
-            fields = {
-                afield: '%s-%s-%s' % (
-                    ct.identifier,
-                    get_object_id(atype) if atype else '',
-                    afield
-                ) for afield in self.attachment_fields
+    def get_wq_config(self):
+        config = super(TypedAttachmentSerializer, self).get_wq_config()
+        if 'initial' not in config:
+            config['initial'] = {
+                'type_field': self.Meta.type_field.replace('_id', ''),
+                'filter': self.Meta.type_filter,
             }
-            found = False
-            for key in fields.values():
-                if key in data:
-                    found = True
-            if found:
-                attachment = self.create_dict(atype, data, fields, i)
-                if attachment:
-                    attachments.append(attachment)
-                i += 1
-
-        # Send modified object to default implementation
-        return super(TypedAttachmentSerializer, self).field_from_native(
-            {field_name: attachments}, files, field_name, into
-        )
+        return config
 
     class Meta:
         # Don't validate these fields (items are saved with their parent)
-        exclude = ("content_type", "content_type_id",
-                   "object_id", "label", "for")
+        exclude = ("content_type", "object_id",)
+        list_serializer_class = TypedAttachmentListSerializer
+
+        # patterns-specific meta
+        type_field = 'type_id'
+        type_filter = {}
+        object_field = 'content_object'
+
+
+class AttachedModelSerializer(ModelSerializer):
+    def create(self, validated_data):
+        model_data, attachment_data = self.extract_attachments(validated_data)
+        instance = super(AttachedModelSerializer, self).create(model_data)
+
+        fields = self.get_fields()
+        for name in attachment_data:
+            model = fields[name].child.Meta.model
+            for attachment in attachment_data[name]:
+                if not attachment:
+                    continue
+                self.set_parent_object(attachment, instance, name)
+                self.create_attachment(model, attachment, name)
+        return instance
+
+    def update(self, instance, validated_data):
+        model_data, attachment_data = self.extract_attachments(validated_data)
+        obj = super(
+            AttachedModelSerializer, self
+        ).update(instance, model_data)
+
+        fields = self.get_fields()
+        for name in attachment_data:
+            model = fields[name].child.Meta.model
+            for attachment in attachment_data[name]:
+                if not attachment:
+                    continue
+                self.set_parent_object(attachment, instance, name)
+                if 'id' in attachment:
+                    exist = self.get_attachment(model, attachment['id'])
+                    self.update_attachment(exist, attachment, name)
+                else:
+                    self.create_attachment(model, attachment, name)
+        return obj
+
+    def extract_attachments(self, validated_data):
+        fields = self.get_fields()
+        attachment_data = {}
+        for name, field in fields.items():
+            if isinstance(field, AttachmentListSerializer):
+                attachment_data[name] = validated_data.pop(name, [])
+        return validated_data, attachment_data
+
+    def set_parent_object(self, attachment, instance, name):
+        serializer = self.get_fields()[name].child
+        fk_name = getattr(serializer.Meta, 'object_field', 'content_object')
+        attachment[fk_name] = instance
+
+    def get_attachment(self, model, pk):
+        return model.objects.get(pk=pk)
+
+    def update_attachment(self, exist, attachment, name):
+        field = self.get_fields()[name]
+        attachment.pop('id')
+        field.child.update(exist, attachment)
+
+    def create_attachment(self, model, attachment, name):
+        field = self.get_fields()[name]
+        field.child.create(attachment)

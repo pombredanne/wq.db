@@ -1,11 +1,4 @@
-from wq.db.rest.models import MultiQuerySet
-from wq.db.patterns.models import Identifier
-import swapper
-
-if swapper.is_swapped('annotate', 'Annotation'):
-    Annotation = None
-else:
-    Annotation = swapper.load_model('annotate', 'Annotation')
+from wq.db.patterns.models import Identifier, Annotation
 
 
 def search(query, auto=True, content_type=None, authority_id=None):
@@ -18,13 +11,14 @@ def search(query, auto=True, content_type=None, authority_id=None):
     if authority_id:
         idfilter['authority_id'] = authority_id
 
-    distinct_on = ('content_type__id', 'object_id')
+    distinct_on = ('content_type__model', 'object_id')
     # First check for exact identifier matches
     id_matches = Identifier.objects.filter_by_identifier(query)
     id_matches = id_matches.filter(**idfilter)
     # If "auto" mode and only one distinct object, return first identifier
-    if id_matches.distinct(*distinct_on).count() == 1 and auto:
-        return id_matches[0:1]
+    if auto:
+        if len(id_matches.order_by(*distinct_on).distinct(*distinct_on)) == 1:
+            return id_matches[0:1]
 
     # Otherwise, include any identifiers containing the case-insensitive string
     id_matches = id_matches | Identifier.objects.filter(
@@ -55,3 +49,46 @@ def search(query, auto=True, content_type=None, authority_id=None):
         results.append(annot_matches)
 
     return MultiQuerySet(*results)
+
+
+class MultiQuerySet(object):
+    querysets = []
+
+    def __init__(self, *args, **kwargs):
+        self.querysets = args
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            multi = True
+        else:
+            multi = False
+            index = slice(index, index + 1)
+
+        result = []
+        for qs in self.querysets:
+            if index.start < qs.count():
+                result.extend(qs[index])
+            index = slice(index.start - qs.count(),
+                          index.stop - qs.count())
+            if index.start < 0:
+                if index.stop < 0:
+                    break
+                index = slice(0, index.stop)
+        if multi:
+            return (item for item in result)
+        else:
+            return result[0]
+
+    def __iter__(self):
+        for qs in self.querysets:
+            for item in qs:
+                yield item
+
+    def count(self):
+        result = 0
+        for qs in self.querysets:
+            result += qs.count()
+        return result
+
+    def __len__(self):
+        return self.count()

@@ -1,17 +1,8 @@
-from wq.db.rest import app
-from .models import Relationship, InverseRelationship, RelationshipType
-from .serializers import (
-    RelationshipSerializer,
-    InverseRelationshipSerializer,
-    RelationshipTypeSerializer
-)
+from wq.db import rest
+from .models import RelationshipType
+from .serializers import RelationshipTypeSerializer
 
-app.router.register_model(
-    Relationship, serializer=RelationshipSerializer
-)
-app.router.register_model(
-    InverseRelationship, serializer=InverseRelationshipSerializer
-)
-app.router.register_model(
+
+rest.router.register_model(
     RelationshipType, serializer=RelationshipTypeSerializer
 )

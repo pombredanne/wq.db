@@ -1,20 +1,23 @@
 language: python
+sudo: false
 python:
  - "2.7"
  - "3.4"
+ - "3.5"
 env:
   global:
-   - DRF="djangorestframework==2.4.4"
-   - DRP="rest-pandas==0.2.1"
+   - DRF="djangorestframework==3.4.6"
   matrix:
-   - DJANGO="django==1.6.8"
-   - DJANGO="django==1.7.1"
+   - DJANGO="django==1.8.14"
+   - DJANGO="django==1.9.9"
+   - DJANGO="django==1.10.1"
+   - DJANGO="django==1.10.1" LINT=1
 before_script:
  - createdb -Upostgres wqdb_test
  - psql -Upostgres wqdb_test -c "CREATE EXTENSION postgis;"
 install:
  - pip install $DJANGO
  - pip install $DRF
- - pip install $DRP
+ - pip install flake8
 script:
- - python setup.py test
+ - ./runtests.sh

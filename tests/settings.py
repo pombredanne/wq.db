@@ -1,8 +1,17 @@
 import os
 
+from wq.db.default_settings import (  # NOQA
+    TEMPLATES,
+    REST_FRAMEWORK,
+    SRID,
+    DISAMBIGUATE,
+)
+
 SECRET_KEY = '1234'
 
-MIDDLEWARE_CLASSES = tuple()
+MIDDLEWARE_CLASSES = (
+    'django.middleware.csrf.CsrfViewMiddleware',
+)
 
 INSTALLED_APPS = (
     'django.contrib.contenttypes',
@@ -15,10 +24,11 @@ INSTALLED_APPS = (
     'wq.db.patterns.relate',
     'wq.db.patterns.mark',
     'wq.db.patterns.locate',
-    'wq.db.contrib.files',
+    'wq.db.patterns.file',
     'tests.rest_app',
+    'tests.conflict_app',
     'tests.patterns_app',
-    'tests.chart_app',
+    'tests.files_app',
 )
 
 DATABASES = {
@@ -29,12 +39,17 @@ DATABASES = {
     }
 }
 
+USE_TZ = True
+TIME_ZONE = "America/Chicago"
+
 ROOT_URLCONF = "tests.urls"
-MEDIA_ROOT = os.path.join(os.path.dirname(__file__), "media")
+BASE_DIR = os.path.dirname(__file__)
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+VERSION_TXT = os.path.join(BASE_DIR, "version.txt")
 
 LANGUAGES = (
     ('en', 'English'),
     ('ko', 'Korean'),
 )
 
-from wq.db.rest.settings import *
+TEMPLATES[0]['DIRS'] += (os.path.join(BASE_DIR, "templates"),)

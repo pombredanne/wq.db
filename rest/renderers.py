@@ -1,6 +1,6 @@
-from rest_framework.renderers import BaseRenderer, JSONPRenderer, JSONRenderer
+from rest_framework.renderers import JSONRenderer
 from django.conf import settings
-from wq.db.rest.settings import SRID as DEFAULT_SRID
+from wq.db.default_settings import SRID as DEFAULT_SRID
 
 
 class JSONRenderer(JSONRenderer):
@@ -11,24 +11,6 @@ class JSONRenderer(JSONRenderer):
         return super(JSONRenderer, self).render(
             data, accepted_media_type, renderer_context
         )
-
-
-class AMDRenderer(JSONPRenderer):
-    media_type = 'application/javascript'
-    format = 'js'
-    default_callback = 'define'
-
-
-class BinaryRenderer(BaseRenderer):
-    def render(self, data, media_type=None, render_context=None):
-        return data
-
-
-def binary_renderer(mimetype, extension=None):
-    class Renderer(BinaryRenderer):
-        media_type = mimetype
-        format = extension
-    return Renderer
 
 
 class GeoJSONRenderer(JSONRenderer):
@@ -79,13 +61,16 @@ class GeoJSONRenderer(JSONRenderer):
             del obj['longitude']
             simple = True
 
-        elif 'geometry' in obj:
-            feature['geometry'] = obj['geometry']
-            del obj['geometry']
+        else:
+            for key, val in list(obj.items()):
+                if isinstance(val, dict) and 'type' in val:
+                    feature['geometry'] = val
+                    del obj[key]
 
-        elif 'locations' in obj:
-            feature['geometry'] = obj['locations']
-            del obj['locations']
+        if 'features' in obj:
+            feature['features'] = obj['features']
+            feature['type'] = 'FeatureCollection'
+            del obj['features']
 
         return feature, simple
 

@@ -1,16 +1,11 @@
-from wq.db.patterns.base.serializers import TypedAttachmentSerializer
-import swapper
-
-from wq.db.rest.models import get_ct
-
-AnnotationType = swapper.load_model('annotate', 'AnnotationType')
+from wq.db.patterns.base import serializers as base
+from .models import Annotation
 
 
-class AnnotationSerializer(TypedAttachmentSerializer):
-    attachment_fields = ['id', 'value']
-    type_model = AnnotationType
+class AnnotationSerializer(base.TypedAttachmentSerializer):
+    class Meta(base.TypedAttachmentSerializer.Meta):
+        model = Annotation
 
-    @property
-    def expected_types(self):
-        ct = get_ct(self.parent.opts.model)
-        return AnnotationType.objects.filter(contenttype=ct)
+
+class AnnotatedModelSerializer(base.AttachedModelSerializer):
+    annotations = AnnotationSerializer(many=True)

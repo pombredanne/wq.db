@@ -3,7 +3,7 @@ import sys
 from setuptools import setup, find_packages
 
 LONG_DESCRIPTION = """
-Django design patterns and REST API for field data collection.
+Django design patterns and REST API for citizen science field data collection.
 """
 
 
@@ -53,7 +53,7 @@ def create_wqdb_namespace():
     if os.path.isdir("wq/db"):
         return
     os.makedirs("wq/db")
-    for folder in ("rest", "contrib", "patterns"):
+    for folder in ("rest", "contrib", "patterns", "default_settings.py"):
         os.symlink("../../" + folder, "wq/db/" + folder)
     init = open(os.path.join("wq/db", "__init__.py"), 'w')
     init.write("")
@@ -85,27 +85,32 @@ if len(sys.argv) > 1 and sys.argv[1] == "test":
 
 setup(
     name='wq.db',
-    version='0.7.1-dev',
+    version='1.0.0-dev',
     author='S. Andrew Sheppard',
     author_email='andrew@wq.io',
-    url='http://wq.io/wq.db',
+    url='https://wq.io/wq.db',
     license='MIT',
     packages=packages,
     package_dir=package_dir,
     namespace_packages=['wq'],
+    entry_points={'wq': 'wq.db=wq.db'},
     description=LONG_DESCRIPTION.strip(),
     long_description=parse_markdown_readme(),
     install_requires=[
-        'Django>=1.6',
-        'djangorestframework>=2.4,<3',
-        'pystache',
-        'python-social-auth',
-        'swapper>=0.2',
+        'Django>=1.8',
+        'djangorestframework>=3.3.3',
+        'django-mustache',
+        'html-json-forms',
+        'natural-keys',
+        'swapper',
         'Markdown',
     ],
+    extras_require={
+        'files': ['wq.io', 'Pillow'],
+        'social': ['python-social-auth'],
+    },
     classifiers=[
-        'Framework :: Django',
-        'Development Status :: 5 - Production/Stable',
+        'Development Status :: 4 - Beta',
         'Environment :: Web Environment',
         'License :: OSI Approved :: MIT License',
         'Natural Language :: English',
@@ -113,6 +118,11 @@ setup(
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Framework :: Django',
+        'Framework :: Django :: 1.8',
+        'Framework :: Django :: 1.9',
+        'Framework :: Django :: 1.10',
         'Topic :: Software Development :: Libraries :: Application Frameworks',
         'Topic :: Text Processing :: Markup :: HTML',
         'Topic :: Scientific/Engineering :: GIS',
@@ -121,8 +131,8 @@ setup(
     test_suite='tests',
     tests_require=[
         'psycopg2',
-        'wq.io>=0.5.1',
-        'rest-pandas>=0.2.1',
+        'wq.io',
         'Pillow',
+        'python-social-auth',
     ],
 )

@@ -1,8 +1,14 @@
-from wq.db.patterns import models
+from django.db import models
+from django.contrib.gis.db.models import GeometryField, GeoManager
+from django.conf import settings
 
 
-class RootModel(models.IdentifiedModel):
+class RootModel(models.Model):
+    slug = models.SlugField()
     description = models.TextField()
+
+    def __str__(self):
+        return self.slug
 
 
 class OneToOneModel(models.Model):
@@ -39,16 +45,75 @@ class UserManagedModel(models.Model):
 class Parent(models.Model):
     name = models.CharField(max_length=10)
 
+    def __str__(self):
+        return self.name
+
 
 class Child(models.Model):
     name = models.CharField(max_length=10)
-    parent = models.ForeignKey(Parent)
+    parent = models.ForeignKey(Parent, related_name="children")
+
+    def __str__(self):
+        return self.name
 
 
 class ItemType(models.Model):
     name = models.CharField(max_length=10)
 
+    def __str__(self):
+        return self.name
+
 
 class Item(models.Model):
     name = models.CharField(max_length=10)
     type = models.ForeignKey(ItemType)
+
+    def __str__(self):
+        return self.name
+
+
+class GeometryModel(models.Model):
+    name = models.CharField(max_length=255)
+    geometry = GeometryField(srid=settings.SRID)
+
+    objects = GeoManager()
+
+    def __str__(self):
+        return self.name
+
+
+class SlugModel(models.Model):
+    code = models.SlugField()
+    name = models.CharField(max_length=255)
+
+    def __str__(self):
+        return self.name
+
+
+class DateModel(models.Model):
+    name = models.CharField(max_length=10)
+    date = models.DateTimeField()
+    empty_date = models.DateTimeField(null=True)
+
+    def __str__(self):
+        return "%s on %s" % (self.name, self.date.date())
+
+
+class ChoiceModel(models.Model):
+    CHOICE_CHOICES = [
+        ('one', 'Choice One'),
+        ('two', 'Choice Two'),
+        ('three', 'Choice Three'),
+    ]
+    name = models.CharField(
+        max_length=10,
+        help_text='Enter Name',
+    )
+    choice = models.CharField(
+        max_length=10,
+        help_text='Pick One',
+        choices=CHOICE_CHOICES,
+    )
+
+    def __str__(self):
+        return "%s: %s" % (self.name, self.choice)

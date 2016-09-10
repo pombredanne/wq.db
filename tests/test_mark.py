@@ -2,10 +2,8 @@
 from __future__ import unicode_literals
 
 from rest_framework.test import APITestCase
-from rest_framework import status
-from django.contrib.auth.models import User
 from tests.patterns_app.models import MarkedModel
-from wq.db.patterns.models import MarkdownType, Markdown
+from wq.db.patterns.models import MarkdownType
 
 
 class MarkTestCase(APITestCase):
@@ -26,6 +24,41 @@ class MarkTestCase(APITestCase):
             markdown="**테스트**",
         )
 
+    def test_mark_config(self):
+        response = self.client.get('/config.json')
+        self.maxDiff = None
+        self.assertEqual([
+            {
+                'name': 'name',
+                'label': 'Name',
+                'type': 'string',
+                'bind': {'required': True},
+                'wq:length': 255,
+            }, {
+                'name': 'markdown',
+                'label': 'Markdown',
+                'type': 'repeat',
+                'bind': {'required': True},
+                'children': [{
+                    'name': 'summary',
+                    'label': 'Summary',
+                    'type': 'string',
+                    'wq:length': 255,
+                }, {
+                    'name': 'markdown',
+                    'label': 'Markdown',
+                    'type': 'string',
+                }, {
+                    'name': 'type',
+                    'label': 'Type',
+                    'type': 'string',
+                    'wq:ForeignKey': 'markdowntype',
+                    'bind': {'required': True},
+                }],
+                'initial': {'type_field': 'type', 'filter': {}},
+            }
+        ], response.data['pages']['markedmodel']['form'])
+
     def test_mark_simple(self):
         self.assertEqual(
             self.instance.get_html(self.en),
@@ -41,6 +74,10 @@ class MarkTestCase(APITestCase):
             self.instance.get_html(self.other),
             "<p><strong>Test</strong></p>"
         )
+
+    def test_mark_empty(self):
+        instance2 = MarkedModel.objects.create(name="Test 2")
+        self.assertIsNone(instance2.get_html(self.en))
 
     def test_mark_rest_en(self):
         self.rest("en", "<p><strong>Test</strong></p>")

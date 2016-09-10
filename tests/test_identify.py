@@ -1,9 +1,8 @@
-from wq.db.rest.models import get_ct
 from rest_framework.test import APITestCase
 from rest_framework import status
 from django.contrib.auth.models import User
 from tests.patterns_app.models import IdentifiedModel
-from wq.db.patterns.models import Authority, Identifier
+from wq.db.patterns.models import Authority
 
 
 def ident_by_auth(idents):
@@ -12,7 +11,7 @@ def ident_by_auth(idents):
     }
 
 
-class IdentifierTestCase(APITestCase):
+class IdentifyTestCase(APITestCase):
     def setUp(self):
         self.auth = Authority.objects.create(
             name="Example",
@@ -20,16 +19,17 @@ class IdentifierTestCase(APITestCase):
             object_url="http://example.com/pages/%s",
         )
 
-    def test_find(self):
+    def test_identify_find(self):
         instance = IdentifiedModel.objects.find("Test 1")
         self.assertEqual(instance.name, "Test 1")
+        self.assertEqual(instance.slug, "test-1")
         self.assertEqual(instance.primary_identifier.name, "Test 1")
         self.assertEqual(instance.primary_identifier.slug, "test-1")
 
         instance2 = IdentifiedModel.objects.find("Test 1")
         self.assertEqual(instance, instance2)
 
-    def test_auth_url(self):
+    def test_identify_auth_url(self):
         instance = IdentifiedModel.objects.find("Test 2")
         instance.identifiers.create(
             authority=self.auth,
@@ -43,8 +43,47 @@ class IdentifierTestCase(APITestCase):
         ident = instance.identifiers.get(authority=self.auth)
         self.assertEqual(ident.url, "http://example.com/pages/test2")
 
+    def test_identify_order(self):
+        auth2 = Authority.objects.create(
+            name="Example.org",
+            homepage="http://example.org/",
+            object_url="http://example.org/content.php?id=%s",
+        )
+        instance = IdentifiedModel.objects.find("Test 3")
+        instance.identifiers.create(
+            authority=auth2,
+            name="Test 3",
+            slug="123",
+        )
+        instance.identifiers.create(
+            authority=self.auth,
+            name="Test 3",
+            slug="test3"
+        )
+        idents = list(instance.identifiers.all())
+        self.assertIsNone(idents[0].authority)
+        self.assertTrue(idents[0].is_primary)
+        self.assertEqual(idents[1].authority, self.auth)
+        self.assertEqual(idents[2].authority, auth2)
 
-class IdentifierRestTestCase(APITestCase):
+    def test_identify_update(self):
+        instance = IdentifiedModel.objects.create(name="Test 4")
+        self.assertIsNotNone(instance.primary_identifier)
+        self.assertEqual(instance.primary_identifier.slug, 'test-4')
+        instance.primary_identifier.slug = 'test-4-update'
+        instance.primary_identifier.name = 'Test 4 Update'
+        instance.primary_identifier.save()
+        instance = IdentifiedModel.objects.get(pk=instance.pk)
+        self.assertEqual(instance.slug, 'test-4-update')
+        self.assertEqual(instance.name, 'Test 4 Update')
+        instance.slug = "test-4-update-2"
+        instance.name = "Test 4 Update 2"
+        instance.save()
+        self.assertEqual(instance.primary_identifier.slug, 'test-4-update-2')
+        self.assertEqual(instance.primary_identifier.name, 'Test 4 Update 2')
+
+
+class IdentifyRestTestCase(APITestCase):
     def setUp(self):
         self.user = User.objects.create(username='testuser', is_superuser=True)
         self.auth = Authority.objects.create(
@@ -60,16 +99,76 @@ class IdentifierRestTestCase(APITestCase):
         )
         self.client.force_authenticate(user=self.user)
 
-    def test_annotate_post(self):
+    def test_identify_config(self):
+        response = self.client.get('/config.json')
+        self.maxDiff = None
+        self.assertEqual([
+            {
+                'name': 'slug',
+                'label': 'Slug',
+                'type': 'string',
+            }, {
+                'name': 'name',
+                'label': 'Name',
+                'type': 'string',
+                'wq:length': 255,
+            }, {
+                'name': 'identifiers',
+                'label': 'Identifiers',
+                'type': 'repeat',
+                'bind': {'required': True},
+                'children': [{
+                    'name': 'name',
+                    'label': 'Name',
+                    'type': 'string',
+                    'bind': {'required': True},
+                    'wq:length': 255,
+                }, {
+                    'name': 'slug',
+                    'label': 'Slug',
+                    'type': 'string',
+                    'wq:length': 50,
+                }, {
+                    'name': 'is_primary',
+                    'label': 'Is Primary',
+                    'type': 'string',
+                }, {
+                    'name': 'authority',
+                    'label': 'Authority',
+                    'type': 'string',
+                    'wq:ForeignKey': 'authority',
+                }],
+                'initial': {
+                    'type_field': 'authority',
+                    'filter': {},
+                }
+            },
+        ], response.data['pages']['identifiedmodel']['form'])
+
+    def test_identify_detail_nested_identifiers(self):
+        response = self.client.get('/identifiedmodels/test-1.json')
+        self.assertIn('identifiers', response.data)
+        self.assertEqual(response.data['identifiers'][0]['slug'], 'test-1')
+
+    def test_identify_list_nested_identifiers(self):
+        response = self.client.get('/identifiedmodels.json')
+        self.assertIn('identifiers', response.data['list'][0])
+
+    def test_identify_post(self):
         form = {
             'name': 'Test 2',
-            'identifier--name': "Test 2",
-        }
-        form['identifier-%s-name' % self.auth.pk] = "Test 2"
-        form['identifier-%s-slug' % self.auth.pk] = "test2"
-        response = self.client.post('/identifiedmodels.json', form)
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            'identifiers[0][name]': "Test 2",
+
+            'identifiers[1][name]': "Test 2",
+            'identifiers[1][authority_id]': self.auth.pk,
+            'identifiers[1][slug]': "test2",
+        }
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
         self.assertEqual(response.data['name'], "Test 2")
         self.assertEqual(response.data['id'], "test-2")
 
@@ -81,25 +180,28 @@ class IdentifierRestTestCase(APITestCase):
         self.assertEqual(idents[None]["slug"], "test-2")
         self.assertEqual(idents[self.auth.pk]["slug"], "test2")
 
-    def test_annotate_put(self):
+    def test_identify_put(self):
+        ident = self.instance.identifiers.get(authority=self.auth)
         form = {
             'name': 'Test 1 - Updated',
-            'identifier--name': "Test 1 - Updated",
-            'identifier--slug': "test-1-updated",
-            'identifier--id': self.instance.primary_identifier.pk
+
+            'identifiers[0][id]': self.instance.primary_identifier.pk,
+            'identifiers[0][name]': "Test 1 - Updated",
+            'identifiers[0][slug]': "test-1-updated",
+
+            'identifiers[1][id]': ident.pk,
+            'identifiers[1][name]': "Test 1B",
+            'identifiers[1][slug]': "test1b",
+            'identifiers[1][type]': self.auth.pk,
         }
-        form['identifier-%s-name' % self.auth.pk] = "Test 1B"
-        form['identifier-%s-slug' % self.auth.pk] = "test1b"
-
-        ident = self.instance.identifiers.get(authority=self.auth)
-        form['identifier-%s-id' % self.auth.pk] = ident.pk
-
         url = (
-            '/identifiedmodels/%s.json' % self.instance.primary_identifier.slug
+            '/identifiedmodels/%s.json' % self.instance.slug
         )
-        response = self.client.put(url, form)
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self.client.put(url, form)
+        self.assertEqual(
+            response.status_code, status.HTTP_200_OK, response.data
+        )
         self.instance = IdentifiedModel.objects.get(pk=self.instance.pk)
         self.assertEqual(self.instance.name, "Test 1 - Updated")
         self.assertEqual(response.data['id'], "test-1-updated")
@@ -114,3 +216,93 @@ class IdentifierRestTestCase(APITestCase):
         self.assertEqual(
             idents[self.auth.pk]["url"], "http://example.com/pages/test1b"
         )
+
+    def test_identify_post_duplicate_auto_slug(self):
+        form = {
+            'name': 'Test 3',
+        }
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+        self.assertEqual(response.data['id'], 'test-3')
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+        self.assertEqual(response.data['id'], 'test-3-1')
+
+    def test_identify_post_duplicate_auto_ident_slug(self):
+        form = {
+            'name': 'Test 4',
+            'identifiers[0][name]': 'Test 4 Ident',
+        }
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+        self.assertEqual(response.data['id'], 'test-4-ident', response.data)
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+        self.assertEqual(response.data['id'], 'test-4-ident-1')
+
+    def test_identify_post_duplicate_explicit_slug(self):
+        form = {
+            'name': 'Test 5',
+            'slug': 'test-5',
+        }
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_400_BAD_REQUEST, response.data
+        )
+        self.assertEqual(
+            response.data['non_field_errors'],
+            ["The fields slug must make a unique set."],
+        )
+
+    def test_identify_post_duplicate_explicit_ident_slug(self):
+        # FIXME: Handle this case
+        return
+        form = {
+            'name': 'Test 6',
+            'identifiers[0][name]': 'Test 6',
+            'identifiers[0][slug]': 'test-6',
+        }
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_400_BAD_REQUEST, response.data
+        )
+
+    def test_identify_alt_ident(self):
+        form = {
+            'name': 'Test 7',
+            'identifiers[0][name]': "Test 7",
+
+            'identifiers[1][name]': "Test 7 Alt",
+            'identifiers[1][authority_id]': self.auth.pk,
+        }
+
+        response = self.client.post('/identifiedmodels.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_201_CREATED, response.data
+        )
+
+        response = self.client.get('/identifiedmodels/test-7-alt.json', form)
+        self.assertEqual(
+            response.status_code, status.HTTP_200_OK, response.data
+        )
+        self.assertEqual(response.data['id'], 'test-7')

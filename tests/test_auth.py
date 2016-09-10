@@ -13,12 +13,12 @@ class AuthTestCase(APITestCase):
         )
         self.client.force_authenticate(self.user)
 
-    def test_config_json(self):
+    def test_auth_config_json(self):
         response = self.client.get('/config.json')
         result = json.loads(response.content.decode('utf-8'))
         self.assertTrue("login" in result['pages'])
 
-    def test_auth_info(self):
+    def test_auth_login_info(self):
         response = self.client.get('/login.json')
         result = json.loads(response.content.decode('utf-8'))
         self.assertTrue("user" in result)
@@ -27,3 +27,18 @@ class AuthTestCase(APITestCase):
 
         self.assertEqual(account['label'], "testuser@example.com")
         self.assertEqual(account['provider_label'], 'Google')
+
+    def test_auth_context_processors(self):
+        response = self.client.get('/auth_context')
+        result = response.content.decode('utf-8')
+        self.assertHTMLEqual(
+            result,
+            """
+            <div>
+                <p>testuser</p>
+                <ul>
+                  <li>Google - testuser@example.com</li>
+                </ul>
+            </div>
+            """
+        )

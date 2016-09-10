@@ -1,10 +1,83 @@
-from django.db.models import *
-from .base.models import *
-from .annotate.models import *
-from .identify.models import *
-from .locate.models import *
-from .mark.models import *
-from .relate.models import *
+from .annotate.models import (
+    AnnotatedModel,
+    AnnotationType,
+    Annotation,
+)
+from .file.models import (
+    FiledModel,
+    FileType,
+    File,
+)
+from .identify.models import (
+    IdentifiedModel,
+    Authority,
+    Identifier,
+    IdentifiedModelManager,
+)
+from .locate.models import (
+    LocatedModel,
+    Location,
+)
+from .mark.models import (
+    MarkedModel,
+    MarkdownType,
+    Markdown,
+)
+from .relate.models import (
+    RelatedModel,
+    RelationshipType,
+    Relationship,
+    InverseRelationshipType,
+    InverseRelationship,
+    RelatedModelManager,
+)
+
+__all__ = (
+    'AnnotatedModel',
+    'AnnotationType',
+    'Annotation',
+
+    'FiledModel',
+    'FileType',
+    'File',
+
+    'IdentifiedModel',
+    'Authority',
+    'Identifier',
+
+    'LocatedModel',
+    'Location',
+
+    'MarkedModel',
+    'MarkdownType',
+    'Markdown',
+
+    'RelatedModel',
+    'RelationshipType',
+    'Relationship',
+    'InverseRelationshipType',
+    'InverseRelationship',
+
+    'IdentifiedAnnotatedModel',
+    'IdentifiedLocatedModel',
+    'IdentifiedMarkedModel',
+    'IdentifiedRelatedModel',
+)
+
+
+class IdentifiedAnnotatedModel(IdentifiedModel, AnnotatedModel):
+    class Meta(IdentifiedModel.Meta):
+        abstract = True
+
+
+class IdentifiedLocatedModel(IdentifiedModel, LocatedModel):
+    class Meta(IdentifiedModel.Meta):
+        abstract = True
+
+
+class IdentifiedMarkedModel(IdentifiedModel, MarkedModel):
+    class Meta(IdentifiedModel.Meta):
+        abstract = True
 
 
 class IdentifiedRelatedModelManager(
@@ -15,10 +88,5 @@ class IdentifiedRelatedModelManager(
 class IdentifiedRelatedModel(IdentifiedModel, RelatedModel):
     objects = IdentifiedRelatedModelManager()
 
-    class Meta:
-        abstract = True
-
-
-class IdentifiedMarkedModel(IdentifiedModel, MarkedModel):
-    class Meta:
+    class Meta(IdentifiedModel.Meta):
         abstract = True

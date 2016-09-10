@@ -1,7 +1,33 @@
 from django.db import models
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes import generic
-from wq.db.patterns.base import SerializableGenericRelation
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation
+)
+from django.db.models.query_utils import PathInfo
+from django.conf import settings
+
+INSTALLED = ('wq.db.patterns.relate' in settings.INSTALLED_APPS)
+
+
+class GenericRelation(GenericRelation):
+    def get_path_info(self):
+        """
+        Django 1.10 will try to resolve InverseRelationship to Relationship;
+        that check is not needed in this case.
+        """
+        if not hasattr(self, 'remote_field'):
+            return super(GenericRelation, self).get_path_info()
+
+        opts = self.remote_field.model._meta
+        target = opts.pk
+        return [PathInfo(
+            self.model._meta,
+            opts,
+            (target,),
+            self.remote_field,
+            True,
+            False
+        )]
 
 
 class RelatedModelManager(models.Manager):
@@ -15,50 +41,18 @@ class RelatedModelManager(models.Manager):
 
         data = self.all()
         for ctype, objs in objects.items():
+            ids = [obj.pk for obj in objs]
             if kwargs.get('inverse', False):
-                data = data.filter(relationships__to_content_type=ctype,
-                                   relationships__to_object_id__in=
-                                   [obj.pk for obj in objs])
+                data = data.filter(
+                    relationships__to_content_type=ctype,
+                    relationships__to_object_id__in=ids,
+                )
             else:
                 data = data.filter(
                     inverserelationships__from_content_type=ctype,
-                    inverserelationships__from_object_id__in=
-                    [obj.pk for obj in objs]
+                    inverserelationships__from_object_id__in=ids,
                 )
         return data
-
-
-class RelatedModel(models.Model):
-    relationships = SerializableGenericRelation(
-        'Relationship',
-        content_type_field='from_content_type',
-        object_id_field='from_object_id',
-    )
-    inverserelationships = SerializableGenericRelation(
-        'InverseRelationship',
-        content_type_field='to_content_type',
-        object_id_field='to_object_id',
-    )
-    objects = RelatedModelManager()
-
-    def all_relationships(self):
-        for rel in self.relationships.all():
-            yield rel
-        for rel in self.inverserelationships.all():
-            yield rel
-
-    def create_relationship(self, to_obj, name,
-                            inverse_name=None, computed=False):
-        return Relationship.objects.create_relationship(
-            from_obj=self,
-            to_obj=to_obj,
-            name=name,
-            inverse_name=inverse_name,
-            computed=computed
-        )
-
-    class Meta:
-        abstract = True
 
 
 class RelationshipManager(models.Manager):
@@ -91,13 +85,13 @@ class Relationship(models.Model):
     # Objects can contain pointers to any model
     from_content_type = models.ForeignKey(ContentType, related_name='+')
     from_object_id = models.PositiveIntegerField()
-    from_content_object = generic.GenericForeignKey(
+    from_content_object = GenericForeignKey(
         'from_content_type', 'from_object_id'
     )
 
     to_content_type = models.ForeignKey(ContentType, related_name='+')
     to_object_id = models.PositiveIntegerField()
-    to_content_object = generic.GenericForeignKey(
+    to_content_object = GenericForeignKey(
         'to_content_type', 'to_object_id'
     )
 
@@ -149,20 +143,28 @@ class Relationship(models.Model):
             }
         return cache[key]
 
+    def _reset_dict_cache(self):
+        for cls in Relationship, InverseRelationship:
+            key = cls._cache_prefix + str(self.pk)
+            if key in cls._dict_cache:
+                del cls._dict_cache[key]
+
     def save(self, *args, **kwargs):
         rightct = self.reltype.right
         self.right = rightct.get_object_for_this_type(pk=self.right_object_id)
         super(Relationship, self).save(*args, **kwargs)
+        self._reset_dict_cache()
 
     def __str__(self):
-        if (self.from_content_type_id and self.type_id
-                and self.to_content_type_id):
+        if (self.from_content_type_id and self.type_id and
+                self.to_content_type_id):
             return '%s %s %s' % (self.left, self.reltype, self.right)
         else:
             return 'Undefined'
 
     class Meta:
         db_table = 'wq_relationship'
+        abstract = not INSTALLED
 
 
 class InverseRelationshipManager(models.Manager):
@@ -200,7 +202,41 @@ class InverseRelationship(Relationship):
         return InverseRelationshipType.objects.get_type(self.type_id)
 
     class Meta:
-        proxy = True
+        proxy = INSTALLED
+        abstract = not INSTALLED
+
+
+class RelatedModel(models.Model):
+    relationships = GenericRelation(
+        Relationship,
+        content_type_field='from_content_type',
+        object_id_field='from_object_id',
+    )
+    inverserelationships = GenericRelation(
+        InverseRelationship,
+        content_type_field='to_content_type',
+        object_id_field='to_object_id',
+    )
+    objects = RelatedModelManager()
+
+    def all_relationships(self):
+        for rel in self.relationships.all():
+            yield rel
+        for rel in self.inverserelationships.all():
+            yield rel
+
+    def create_relationship(self, to_obj, name,
+                            inverse_name=None, computed=False):
+        return Relationship.objects.create_relationship(
+            from_obj=self,
+            to_obj=to_obj,
+            name=name,
+            inverse_name=inverse_name,
+            computed=computed
+        )
+
+    class Meta:
+        abstract = True
 
 
 class RelationshipTypeManager(models.Manager):
@@ -239,6 +275,7 @@ class RelationshipType(models.Model):
 
     class Meta:
         db_table = 'wq_relationshiptype'
+        abstract = not INSTALLED
 
 
 class InverseRelationshipTypeManager(RelationshipTypeManager):
@@ -264,4 +301,23 @@ class InverseRelationshipType(RelationshipType):
         return self.inverse_name
 
     class Meta:
-        proxy = True
+        proxy = INSTALLED
+        abstract = not INSTALLED
+
+
+def get_related_types(cls, **kwargs):
+    from wq.db.rest.models import ContentType as RestContentType
+    ctypes = set()
+    for rtype in cls.objects.filter(**kwargs):
+        # This is a DjangoContentType, swap for our custom version
+        ctype = RestContentType.objects.get_for_id(rtype.right.pk)
+        ctypes.add(ctype)
+    return ctypes
+
+
+def get_related_children(contenttype):
+    return get_related_types(RelationshipType, from_type=contenttype)
+
+
+def get_related_parents(contenttype):
+    return get_related_types(InverseRelationshipType, to_type=contenttype)

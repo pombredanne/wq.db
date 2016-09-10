@@ -1,6 +1,7 @@
-from wq.db.rest.serializers import ModelSerializer, ContentTypeField
-from wq.db.patterns.base.serializers import TypedAttachmentSerializer
-from wq.db.rest.models import get_ct, get_object_id, get_by_identifier
+from rest_framework import serializers
+from wq.db.rest.serializers import ModelSerializer
+from wq.db.patterns.base import serializers as base
+from wq.db.rest.models import get_by_identifier, ContentType
 
 from .models import (
     Relationship, InverseRelationship,
@@ -8,56 +9,82 @@ from .models import (
 )
 
 
-class RelationshipSerializer(TypedAttachmentSerializer):
-    attachment_fields = ['id', 'item_id']
-    required_fields = ['item_id']
-    type_model = RelationshipType
-    object_field = 'left'
-    item_id_field = 'to_object_id'
-    parent_id_field = 'from_object_id'
+class ContentTypeField(serializers.SlugRelatedField):
+    queryset = ContentType.objects.all()
+    slug_field = "model"
 
-    def get_default_fields(self):
-        fields = super(RelationshipSerializer, self).get_default_fields()
-        del fields[self.parent_id_field]
+    def __init__(self, **kwargs):
+        super(serializers.RelatedField, self).__init__(**kwargs)
+
+
+class RelationshipSerializer(base.TypedAttachmentSerializer):
+
+    def get_fields(self):
+        fields = super(RelationshipSerializer, self).get_fields()
         fields['type_label'].source = 'reltype'
         return fields
 
-    def to_native(self, rel):
-        data = super(RelationshipSerializer, self).to_native(rel)
-        del data[self.item_id_field]
+    def to_representation(self, rel):
+        data = super(RelationshipSerializer, self).to_representation(rel)
         data.update(rel.right_dict)
         return data
 
-    def create_dict(self, atype, data, fields, index):
-        attachment = super(RelationshipSerializer, self).create_dict(
-            atype, data, fields, index
-        )
-        if attachment is None:
-            return None
-        if 'item_id' in attachment and 'type' in attachment:
-            type = self.type_model.objects.get(pk=attachment['type'])
+    def to_internal_value(self, attachment):
+        if 'item_id' in attachment and 'type_id' in attachment:
+            type = self.Meta.type_model.objects.get(pk=attachment['type_id'])
             cls = type.right.model_class()
             obj = get_by_identifier(cls.objects, attachment['item_id'])
-            attachment[self.item_id_field] = obj.pk
+            attachment[self.Meta.item_id_field] = obj.pk
+            attachment[self.Meta.item_ct_field] = type.right.pk
             del attachment['item_id']
-        return attachment
+        return super(RelationshipSerializer, self).to_internal_value(
+            attachment
+        )
+
+    class Meta(base.TypedAttachmentSerializer.Meta):
+        model = Relationship
+
+        # patterns-specific
+        object_field = 'left'
+
+        # relate-specific
+        type_model = RelationshipType
+        item_id_field = 'to_object_id'
+        item_ct_field = 'to_content_type_id'
+
+        exclude = (
+            'from_content_type', 'from_object_id',
+        )
 
 
 class InverseRelationshipSerializer(RelationshipSerializer):
-    item_id_field = 'from_object_id'
-    parent_id_field = 'to_object_id'
-    type_model = InverseRelationshipType
+    class Meta(RelationshipSerializer.Meta):
+        model = InverseRelationship
 
-    def get_default_fields(self):
-        fields = super(
-            InverseRelationshipSerializer, self
-        ).get_default_fields()
-        return fields
+        type_model = InverseRelationshipType
+        item_id_field = 'from_object_id'
+        item_ct_field = 'from_content_type_id'
+
+        exclude = (
+            'to_content_type', 'to_object_id'
+        )
 
 
 class RelationshipTypeSerializer(ModelSerializer):
     from_type = ContentTypeField()
     to_type = ContentTypeField()
 
-    class Meta:
-        exclude = ('for',)
+
+class RelatedModelSerializer(base.AttachedModelSerializer):
+    relationships = RelationshipSerializer(many=True)
+    inverserelationships = InverseRelationshipSerializer(many=True)
+
+    def set_parent_object(self, attachment, instance, name):
+        if name == "relationships":
+            attachment['from_content_object'] = instance
+        elif name == "inverserelationships":
+            attachment['to_content_object'] = instance
+        else:
+            super(RelatedModelSerializer, self).set_parent_object(
+                attachment, instance, name
+            )

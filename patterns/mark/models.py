@@ -1,13 +1,15 @@
 from django.db import models
-from django.contrib.contenttypes import generic
 from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey, GenericRelation
+)
 from django.utils.translation import get_language_from_request
-from wq.db.patterns.base import SerializableGenericRelation
+from django.conf import settings
 
 import swapper
 swapper.set_app_prefix('mark', 'WQ')
 
-from django.conf import settings
+INSTALLED = ('wq.db.patterns.mark' in settings.INSTALLED_APPS)
 
 
 class BaseMarkdownType(models.Model):
@@ -29,7 +31,7 @@ class BaseMarkdownType(models.Model):
 
     @classmethod
     def get_default(cls):
-        markdowns = cls.objects.order_by('pk')
+        markdowns = cls.objects.all()
         if len(markdowns) > 0:
             return markdowns[0]
 
@@ -38,6 +40,7 @@ class BaseMarkdownType(models.Model):
 
     class Meta:
         abstract = True
+        ordering = ['pk']
 
 
 class MarkdownType(BaseMarkdownType):
@@ -49,6 +52,7 @@ class MarkdownType(BaseMarkdownType):
     class Meta:
         swappable = swapper.swappable_setting('mark', 'MarkdownType')
         db_table = "wq_markdowntype"
+        abstract = not INSTALLED
 
 
 class Markdown(models.Model):
@@ -58,10 +62,10 @@ class Markdown(models.Model):
 
     content_type = models.ForeignKey(ContentType)
     object_id = models.PositiveIntegerField()
-    content_object = generic.GenericForeignKey()
+    content_object = GenericForeignKey()
 
     def __str__(self):
-        return self.summary
+        return self.summary or ''
 
     @property
     def html(self):
@@ -71,10 +75,11 @@ class Markdown(models.Model):
 
     class Meta:
         db_table = "wq_markdown"
+        abstract = not INSTALLED
 
 
 class MarkedModel(models.Model):
-    markdown = SerializableGenericRelation(Markdown)
+    markdown = GenericRelation(Markdown)
 
     def get_markdown(self, type):
         markdowns = self.markdown.filter(type=type)
@@ -86,7 +91,9 @@ class MarkedModel(models.Model):
 
     def get_html(self, type):
         markdown = self.get_markdown(type)
-        return markdown.html
+        if markdown:
+            return markdown.html
+        return None
 
     class Meta:
         abstract = True

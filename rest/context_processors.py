@@ -1,4 +1,4 @@
-from .app import router
+from . import router
 from django.utils.http import urlquote
 
 
@@ -6,7 +6,7 @@ def version(request):
     return {'version': router.version}
 
 
-def pages_info(request):
+def router_info(request):
     # FIXME: support non-root base_url
     base_url = ""
     path = request.path[1:]
@@ -25,5 +25,33 @@ def pages_info(request):
     }
 
     return {
-        'pages_info': info
+        'router_info': info,
+        'pages_info': info,
+    }
+
+
+def pages_info(request):
+    return router_info(request)
+
+
+def wq_config(request):
+    # FIXME: support non-root base_url
+    parts = request.path.split('/')
+    user = request.user if request.user.is_authenticated() else None
+    wq_conf = router.get_config(user=user)
+    page_conf = None
+    root_conf = None
+
+    for name, conf in wq_conf['pages'].items():
+        if parts[1] == conf['url']:
+            page_conf = conf
+        elif conf['url'] == "":
+            root_conf = conf
+
+    if not page_conf and root_conf and len(parts) == 2:
+        page_conf = root_conf
+
+    return {
+        'wq_config': wq_conf,
+        'page_config': page_conf,
     }

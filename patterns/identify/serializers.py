@@ -1,26 +1,64 @@
 from rest_framework import serializers
-from wq.db.patterns.base.serializers import TypedAttachmentSerializer
-from .models import Identifier, Authority
+from rest_framework.validators import UniqueTogetherValidator
+from wq.db.patterns.base import serializers as base
+from .models import Identifier
 
 
-class IdentifierSerializer(TypedAttachmentSerializer):
-    type_model = Authority
-    type_field = 'authority'
-    attachment_fields = ['id', 'name', 'slug', 'is_primary']
-    required_fields = ['name']
+class IdentifierListSerializer(base.TypedAttachmentListSerializer):
+    def to_internal_value(self, data):
+        data = super(IdentifierListSerializer, self).to_internal_value(data)
+        primary = [
+            ident for ident in data
+            if ident and ident.get('is_primary', None)
+        ]
+        if not any(primary) and len(data) > 0:
+            for ident in data:
+                if ident:
+                    ident['is_primary'] = True
+                    break
+        return data
 
-    url = serializers.Field()
 
-    @property
-    def expected_types(self):
-        return [None] + list(Authority.objects.all())
+class IdentifierSerializer(base.TypedAttachmentSerializer):
+    url = serializers.ReadOnlyField()
 
-    def create_dict(self, atype, data, fields, index):
-        obj = super(IdentifierSerializer, self).create_dict(
-            atype, data, fields, index
+    class Meta(base.TypedAttachmentSerializer.Meta):
+        model = Identifier
+        list_serializer_class = IdentifierListSerializer
+
+        # patterns-specific
+        type_field = 'authority_id'
+
+
+class IdentifiedModelValidator(UniqueTogetherValidator):
+    def enforce_required_fields(self, attrs):
+        pass
+
+    def filter_queryset(self, attrs, queryset):
+        for field in self.fields:
+            attrs.setdefault(field, None)
+        return super(IdentifiedModelValidator, self).filter_queryset(
+            attrs, queryset
         )
-        if obj is None:
-            return obj
-        if 'is_primary' not in obj:
-            obj['is_primary'] = (index == 0)
-        return obj
+
+
+class IdentifiedModelSerializer(base.AttachedModelSerializer):
+    identifiers = IdentifierSerializer(many=True)
+    slug = serializers.SlugField(required=False)
+
+    def get_unique_together_validators(self):
+        return [IdentifiedModelValidator(
+            queryset=self.Meta.model.objects.all(),
+            fields=['slug']
+        )]
+
+    def save(self, *args, **kwargs):
+        super(IdentifiedModelSerializer, self).save(*args, **kwargs)
+        # Fetch instance from DB in case identifier changed slug while saving
+        self.instance = self.Meta.model.objects.get(pk=self.instance.pk)
+        return self.instance
+
+    class Meta:
+        wq_config = {
+            'lookup': 'slug',
+        }
